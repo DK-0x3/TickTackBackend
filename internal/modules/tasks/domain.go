@@ -31,9 +31,12 @@ func (priority Priority) IsValid() bool {
 type Task struct {
 	ID          uuid.UUID
 	UserID      uuid.UUID
+	ListID      uuid.UUID
 	Title       string
 	Description *string
 	Priority    Priority
+	DueDate     *string
+	DueTime     *string
 	CompletedAt *time.Time
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
@@ -46,6 +49,13 @@ type CreateParams struct {
 	Title       string
 	Description *string
 	Priority    Priority
+	DueDate     *string
+	DueTime     *string
+}
+
+type TaskSchedule struct {
+	DueDate *string
+	DueTime *string
 }
 
 type ListParams struct {

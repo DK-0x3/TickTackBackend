@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"uuid"
@@ -18,6 +19,7 @@ type TaskService interface {
 	List(context.Context, ListParams) (ListPage, error)
 	Get(context.Context, uuid.UUID, uuid.UUID) (Task, error)
 	SetCompleted(context.Context, uuid.UUID, uuid.UUID, bool) (Task, error)
+	SetSchedule(context.Context, uuid.UUID, uuid.UUID, TaskSchedule) (Task, error)
 	Delete(context.Context, uuid.UUID, uuid.UUID) error
 	Restore(context.Context, uuid.UUID, uuid.UUID) (Task, error)
 }
@@ -34,6 +36,7 @@ func RegisterRoutes(router gin.IRoutes, service TaskService, userID uuid.UUID) {
 	router.GET("/tasks", handler.list)
 	router.GET("/tasks/:id", handler.get)
 	router.PATCH("/tasks/:id/completion", handler.setCompleted)
+	router.PATCH("/tasks/:id/schedule", handler.setSchedule)
 	router.DELETE("/tasks/:id", handler.delete)
 	router.POST("/tasks/:id/restore", handler.restore)
 }
@@ -55,13 +58,15 @@ func (handler Handler) create(ctx *gin.Context) {
 		Title:       request.Title,
 		Description: request.Description,
 		Priority:    priority,
+		DueDate:     request.DueDate,
+		DueTime:     request.DueTime,
 	})
 	if err != nil {
 		respondTaskError(ctx, err)
 		return
 	}
 
-	ctx.JSON(http.StatusCreated, newTaskResponse(task))
+	ctx.JSON(http.StatusCreated, NewTaskResponse(task))
 }
 
 func (handler Handler) list(ctx *gin.Context) {
@@ -111,7 +116,7 @@ func (handler Handler) get(ctx *gin.Context) {
 		return
 	}
 
-	ctx.JSON(http.StatusOK, newTaskResponse(task))
+	ctx.JSON(http.StatusOK, NewTaskResponse(task))
 }
 
 func (handler Handler) setCompleted(ctx *gin.Context) {
@@ -137,7 +142,37 @@ func (handler Handler) setCompleted(ctx *gin.Context) {
 		return
 	}
 
-	ctx.JSON(http.StatusOK, newTaskResponse(task))
+	ctx.JSON(http.StatusOK, NewTaskResponse(task))
+}
+
+func (handler Handler) setSchedule(ctx *gin.Context) {
+	taskID, ok := parseTaskID(ctx)
+	if !ok {
+		return
+	}
+
+	var request setTaskScheduleRequest
+	if err := ctx.ShouldBindJSON(&request); err != nil || len(request.DueDate) == 0 || len(request.DueTime) == 0 {
+		respondError(ctx, http.StatusBadRequest, "invalid_request", "Request body is invalid")
+		return
+	}
+
+	var dueDate, dueTime *string
+	if json.Unmarshal(request.DueDate, &dueDate) != nil || json.Unmarshal(request.DueTime, &dueTime) != nil {
+		respondError(ctx, http.StatusBadRequest, "invalid_request", "Request body is invalid")
+		return
+	}
+
+	task, err := handler.service.SetSchedule(ctx.Request.Context(), handler.userID, taskID, TaskSchedule{
+		DueDate: dueDate,
+		DueTime: dueTime,
+	})
+	if err != nil {
+		respondTaskError(ctx, err)
+		return
+	}
+
+	ctx.JSON(http.StatusOK, NewTaskResponse(task))
 }
 
 func (handler Handler) delete(ctx *gin.Context) {
@@ -166,7 +201,7 @@ func (handler Handler) restore(ctx *gin.Context) {
 		return
 	}
 
-	ctx.JSON(http.StatusOK, newTaskResponse(task))
+	ctx.JSON(http.StatusOK, NewTaskResponse(task))
 }
 
 func parseTaskID(ctx *gin.Context) (uuid.UUID, bool) {
@@ -184,7 +219,10 @@ func respondTaskError(ctx *gin.Context, err error) {
 	case errors.Is(err, ErrTitleRequired),
 		errors.Is(err, ErrTitleTooLong),
 		errors.Is(err, ErrDescriptionTooLong),
-		errors.Is(err, ErrInvalidPriority):
+		errors.Is(err, ErrInvalidPriority),
+		errors.Is(err, ErrInvalidDueDate),
+		errors.Is(err, ErrInvalidDueTime),
+		errors.Is(err, ErrDueDateRequired):
 		respondError(ctx, http.StatusBadRequest, "validation_failed", err.Error())
 	case errors.Is(err, ErrNotFound):
 		respondError(ctx, http.StatusNotFound, "task_not_found", ErrNotFound.Error())

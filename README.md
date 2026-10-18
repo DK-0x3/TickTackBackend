@@ -38,6 +38,7 @@ POST  /tasks
 GET   /tasks
 GET   /tasks/:id
 PATCH /tasks/:id/completion
+PATCH /tasks/:id/schedule
 DELETE /tasks/:id
 POST  /tasks/:id/restore
 ```
@@ -62,8 +63,39 @@ the same user. Both counts cover all pages, regardless of the requested cursor.
 They are recalculated for each request, so they may change while pages are
 being loaded.
 
+A task can have a calendar date without a time, or a date with an exact time.
+The time cannot be set without a date. Create a task with optional `due_date`
+(`YYYY-MM-DD`) and `due_time` (`HH:mm`) fields. To change or clear the schedule,
+send both fields to `PATCH /tasks/:id/schedule`:
+
+```json
+{"due_date":"2026-10-05","due_time":null}
+```
+
+Set both fields to `null` to remove the date. The API stores calendar values;
+it does not convert them to UTC or deliver reminders yet.
+
 Authentication is not implemented yet. Task requests temporarily use the
 fixed `DEVELOPMENT_USER_ID` from application configuration.
+
+## Task views API
+
+```http
+GET   /inbox/views
+GET   /task-views/:viewID/tasks?limit=20&cursor=...
+PATCH /task-views/:viewID/settings
+```
+
+`GET /inbox/views` creates missing Inbox metadata for the development user and
+returns its `list_id` and six ordered views. The task endpoint applies that
+view's saved section and sorting rules before cursor pagination. Its response
+has `items`, `next_cursor`, `total`, `completed_total`, `view_version`, and
+`today`. A cursor belongs to one view version and one user-local date; a stale
+cursor returns HTTP 409, after which the client should restart from page one.
+
+`PATCH /task-views/:viewID/settings` accepts `sort_field`, `sort_direction`, and
+`expected_version`. It returns the updated view, HTTP 400 for invalid settings,
+HTTP 404 if the view is unavailable to the user, or HTTP 409 on a version conflict.
 
 ## Configuration
 
@@ -73,6 +105,7 @@ fixed `DEVELOPMENT_USER_ID` from application configuration.
 | `HTTP_ADDRESS` | `:8080` | HTTP server listen address |
 | `DATABASE_URL` | local PostgreSQL URL | PostgreSQL connection string |
 | `DEVELOPMENT_USER_ID` | fixed local UUID | Temporary user until authentication is implemented |
+| `DEVELOPMENT_TIME_ZONE` | `Asia/Yekaterinburg` | Temporary IANA time zone used for Inbox date sections |
 
 ## Database
 

@@ -49,13 +49,18 @@ func TestRepositoryAndServiceWithPostgres(t *testing.T) {
 		admin.Close()
 	})
 
-	migration, err := os.ReadFile("../../../migrations/00001_create_tasks.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	up := strings.Split(string(migration), "-- +goose Down")[0]
-	if _, err := pool.Exec(ctx, up); err != nil {
-		t.Fatalf("apply task migration: %v", err)
+	for _, path := range []string{
+		"../../../migrations/00001_create_tasks.sql",
+		"../../../migrations/00002_add_task_schedule.sql",
+	} {
+		migration, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		up := strings.Split(string(migration), "-- +goose Down")[0]
+		if _, err := pool.Exec(ctx, up); err != nil {
+			t.Fatalf("apply task migration %s: %v", path, err)
+		}
 	}
 
 	repository := NewRepository(dbsqlc.New(pool))

@@ -70,6 +70,10 @@ func (stub *repositoryStub) SetCompleted(
 	return stub.setCompletedResult, stub.setCompletedError
 }
 
+func (stub *repositoryStub) SetSchedule(context.Context, uuid.UUID, uuid.UUID, TaskSchedule) (Task, error) {
+	return Task{}, nil
+}
+
 func (stub *repositoryStub) Delete(context.Context, uuid.UUID, uuid.UUID) error {
 	return nil
 }

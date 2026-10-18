@@ -12,12 +12,21 @@ import (
 
 type Querier interface {
 	CountTasks(ctx context.Context, userID uuid.UUID) (CountTasksRow, error)
+	CountTasksForView(ctx context.Context, arg CountTasksForViewParams) (CountTasksForViewRow, error)
 	CreateTask(ctx context.Context, arg CreateTaskParams) (Task, error)
 	DeleteTask(ctx context.Context, arg DeleteTaskParams) (int64, error)
+	EnsureInbox(ctx context.Context, userID uuid.UUID) (List, error)
+	EnsureInboxViews(ctx context.Context, arg EnsureInboxViewsParams) error
+	GetInbox(ctx context.Context, userID uuid.UUID) (List, error)
 	GetTask(ctx context.Context, arg GetTaskParams) (Task, error)
+	GetTaskView(ctx context.Context, arg GetTaskViewParams) (TaskView, error)
+	ListTaskViews(ctx context.Context, arg ListTaskViewsParams) ([]TaskView, error)
 	ListTasks(ctx context.Context, arg ListTasksParams) ([]Task, error)
+	ListTasksForView(ctx context.Context, arg ListTasksForViewParams) ([]ListTasksForViewRow, error)
 	RestoreTask(ctx context.Context, arg RestoreTaskParams) (Task, error)
+	SaveTaskViewSettings(ctx context.Context, arg SaveTaskViewSettingsParams) (SaveTaskViewSettingsRow, error)
 	SetTaskCompleted(ctx context.Context, arg SetTaskCompletedParams) (Task, error)
+	SetTaskSchedule(ctx context.Context, arg SetTaskScheduleParams) (Task, error)
 }
 
 var _ Querier = (*Queries)(nil)

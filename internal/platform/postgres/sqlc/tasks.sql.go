@@ -17,8 +17,11 @@ SELECT
     count(*) AS total,
     count(*) FILTER (WHERE completed_at IS NOT NULL) AS completed_total
 FROM tasks
-WHERE user_id = $1
-AND deleted_at IS NULL
+JOIN lists AS list ON list.id = tasks.list_id AND list.user_id = tasks.user_id
+WHERE tasks.user_id = $1
+AND list.kind = 'inbox'
+AND list.deleted_at IS NULL
+AND tasks.deleted_at IS NULL
 `
 
 type CountTasksRow struct {
@@ -33,20 +36,147 @@ func (q *Queries) CountTasks(ctx context.Context, userID uuid.UUID) (CountTasksR
 	return i, err
 }
 
+const countTasksForView = `-- name: CountTasksForView :one
+WITH classified AS (
+    SELECT
+        task.id, task.user_id, task.title, task.description, task.priority, task.completed_at, task.created_at, task.updated_at, task.deleted_at, task.version, task.due_date, task.due_time, task.list_id,
+        target.section AS requested_section,
+        target.show_completed AS requested_show_completed,
+        target.sort_field,
+        target.sort_direction,
+        CASE
+            WHEN task.due_date IS NULL THEN
+                CASE
+                    WHEN task.completed_at IS NULL
+                        OR (
+                             task.completed_at >= $1::timestamptz
+                                 AND task.completed_at < $2::timestamptz
+                             )
+                        THEN 'today'
+                    ELSE 'completed'
+                    END
+            WHEN task.due_date < $3::date THEN
+                CASE
+                    WHEN task.completed_at IS NULL THEN 'overdue'
+                    ELSE 'completed'
+                    END
+            WHEN task.due_date = $3::date
+                THEN 'today'
+            WHEN task.due_date = $3::date + 1
+                THEN 'tomorrow'
+            WHEN task.due_date < $3::date + 7
+                THEN 'next_week'
+            ELSE 'next'
+            END::text AS source_section
+    FROM task_views AS target
+             JOIN lists AS list
+                  ON list.id = target.list_id
+                      AND list.user_id = target.user_id
+             JOIN tasks AS task
+                  ON task.list_id = target.list_id
+                      AND task.user_id = target.user_id
+    WHERE target.id = $4
+      AND target.user_id = $5
+      AND list.deleted_at IS NULL
+      AND task.deleted_at IS NULL
+),
+     visible AS (
+         SELECT
+             classified.id, classified.user_id, classified.title, classified.description, classified.priority, classified.completed_at, classified.created_at, classified.updated_at, classified.deleted_at, classified.version, classified.due_date, classified.due_time, classified.list_id, classified.requested_section, classified.requested_show_completed, classified.sort_field, classified.sort_direction, classified.source_section,
+             CASE
+                 WHEN requested_section = 'completed' THEN
+                     completed_at IS NOT NULL
+                         AND (
+                         source_section = 'completed'
+                             OR source.show_completed IS FALSE
+                         )
+                 WHEN requested_section = 'all' THEN
+                     completed_at IS NULL OR requested_show_completed
+                 ELSE
+                     source_section = requested_section
+                         AND (
+                         completed_at IS NULL
+                             OR requested_show_completed
+                         )
+                 END AS is_visible
+         FROM classified
+                  LEFT JOIN task_views AS source
+                            ON source.user_id = classified.user_id
+                                AND source.list_id = classified.list_id
+                                AND source.section = classified.source_section
+     )
+
+SELECT
+    count(*) AS total,
+    count(*) FILTER (
+        WHERE completed_at IS NOT NULL
+        ) AS completed_total,
+    count(*) FILTER (
+        WHERE is_visible
+        ) AS visible_total
+FROM visible
+WHERE CASE
+          WHEN requested_section = 'completed' THEN is_visible
+          ELSE
+              requested_section = 'all'
+                  OR source_section = requested_section
+          END
+`
+
+type CountTasksForViewParams struct {
+	DayStart pgtype.Timestamptz
+	DayEnd   pgtype.Timestamptz
+	Today    pgtype.Date
+	ViewID   uuid.UUID
+	UserID   uuid.UUID
+}
+
+type CountTasksForViewRow struct {
+	Total          int64
+	CompletedTotal int64
+	VisibleTotal   int64
+}
+
+func (q *Queries) CountTasksForView(ctx context.Context, arg CountTasksForViewParams) (CountTasksForViewRow, error) {
+	row := q.db.QueryRow(ctx, countTasksForView,
+		arg.DayStart,
+		arg.DayEnd,
+		arg.Today,
+		arg.ViewID,
+		arg.UserID,
+	)
+	var i CountTasksForViewRow
+	err := row.Scan(&i.Total, &i.CompletedTotal, &i.VisibleTotal)
+	return i, err
+}
+
 const createTask = `-- name: CreateTask :one
+WITH inbox AS (
+    INSERT INTO lists (user_id, kind, title)
+    VALUES ($1, 'inbox', 'Inbox')
+    ON CONFLICT (user_id) WHERE kind = 'inbox'
+    DO UPDATE SET title = lists.title
+    RETURNING id
+)
 INSERT INTO tasks (
      user_id,
+     list_id,
      title,
      description,
-     priority
+     priority,
+     due_date,
+     due_time
 )
-VALUES (
+SELECT
         $1,
+        inbox.id,
         $2,
         $3,
-        $4
-       )
-RETURNING id, user_id, title, description, priority, completed_at, created_at, updated_at, deleted_at, version
+        $4,
+        $5,
+        $6
+FROM inbox
+RETURNING id, user_id, title, description, priority, completed_at, created_at, updated_at, deleted_at, version, due_date, due_time, list_id
 `
 
 type CreateTaskParams struct {
@@ -54,6 +184,8 @@ type CreateTaskParams struct {
 	Title       string
 	Description *string
 	Priority    string
+	DueDate     pgtype.Date
+	DueTime     pgtype.Time
 }
 
 func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (Task, error) {
@@ -62,6 +194,8 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (Task, e
 		arg.Title,
 		arg.Description,
 		arg.Priority,
+		arg.DueDate,
+		arg.DueTime,
 	)
 	var i Task
 	err := row.Scan(
@@ -75,6 +209,9 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (Task, e
 		&i.UpdatedAt,
 		&i.DeletedAt,
 		&i.Version,
+		&i.DueDate,
+		&i.DueTime,
+		&i.ListID,
 	)
 	return i, err
 }
@@ -103,7 +240,7 @@ func (q *Queries) DeleteTask(ctx context.Context, arg DeleteTaskParams) (int64, 
 }
 
 const getTask = `-- name: GetTask :one
-SELECT id, user_id, title, description, priority, completed_at, created_at, updated_at, deleted_at, version FROM tasks
+SELECT id, user_id, title, description, priority, completed_at, created_at, updated_at, deleted_at, version, due_date, due_time, list_id FROM tasks
 WHERE user_id = $1
 AND id = $2
 AND deleted_at IS NULL
@@ -128,26 +265,32 @@ func (q *Queries) GetTask(ctx context.Context, arg GetTaskParams) (Task, error) 
 		&i.UpdatedAt,
 		&i.DeletedAt,
 		&i.Version,
+		&i.DueDate,
+		&i.DueTime,
+		&i.ListID,
 	)
 	return i, err
 }
 
 const listTasks = `-- name: ListTasks :many
-SELECT id, user_id, title, description, priority, completed_at, created_at, updated_at, deleted_at, version FROM tasks
-WHERE user_id = $1
-AND deleted_at IS NULL
+SELECT task.id, task.user_id, task.title, task.description, task.priority, task.completed_at, task.created_at, task.updated_at, task.deleted_at, task.version, task.due_date, task.due_time, task.list_id FROM tasks AS task
+JOIN lists AS list ON list.id = task.list_id AND list.user_id = task.user_id
+WHERE task.user_id = $1
+AND list.kind = 'inbox'
+AND list.deleted_at IS NULL
+AND task.deleted_at IS NULL
 AND (
     (
         $2::timestamptz IS NULL
         AND $3::uuid IS NULL
     )
     OR
-    (created_at, id) < (
+    (task.created_at, task.id) < (
         $2::timestamptz,
         $3::uuid
     )
 )
-ORDER BY created_at DESC, id DESC
+ORDER BY task.created_at DESC, task.id DESC
 LIMIT $4
 `
 
@@ -183,6 +326,214 @@ func (q *Queries) ListTasks(ctx context.Context, arg ListTasksParams) ([]Task, e
 			&i.UpdatedAt,
 			&i.DeletedAt,
 			&i.Version,
+			&i.DueDate,
+			&i.DueTime,
+			&i.ListID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTasksForView = `-- name: ListTasksForView :many
+WITH classified AS (
+    SELECT
+        task.id, task.user_id, task.title, task.description, task.priority, task.completed_at, task.created_at, task.updated_at, task.deleted_at, task.version, task.due_date, task.due_time, task.list_id,
+        target.section AS requested_section,
+        target.show_completed AS requested_show_completed,
+        target.sort_field,
+        target.sort_direction,
+        CASE
+            WHEN task.due_date IS NULL THEN
+                CASE
+                    WHEN task.completed_at IS NULL
+                        OR (
+                             task.completed_at >= $4::timestamptz
+                                 AND task.completed_at < $5::timestamptz
+                             )
+                        THEN 'today'
+                    ELSE 'completed'
+                    END
+            WHEN task.due_date < $6::date THEN
+                CASE
+                    WHEN task.completed_at IS NULL THEN 'overdue'
+                    ELSE 'completed'
+                    END
+            WHEN task.due_date = $6::date
+                THEN 'today'
+            WHEN task.due_date = $6::date + 1
+                THEN 'tomorrow'
+            WHEN task.due_date < $6::date + 7
+                THEN 'next_week'
+            ELSE 'next'
+            END::text AS source_section
+    FROM task_views AS target
+             JOIN lists AS list
+                  ON list.id = target.list_id
+                      AND list.user_id = target.user_id
+             JOIN tasks AS task
+                  ON task.list_id = target.list_id
+                      AND task.user_id = target.user_id
+    WHERE target.id = $7
+      AND target.user_id = $8
+      AND list.deleted_at IS NULL
+      AND task.deleted_at IS NULL
+),
+     visible AS (
+         SELECT
+             classified.id, classified.user_id, classified.title, classified.description, classified.priority, classified.completed_at, classified.created_at, classified.updated_at, classified.deleted_at, classified.version, classified.due_date, classified.due_time, classified.list_id, classified.requested_section, classified.requested_show_completed, classified.sort_field, classified.sort_direction, classified.source_section,
+             CASE
+                 WHEN requested_section = 'completed' THEN
+                     completed_at IS NOT NULL
+                         AND (
+                         source_section = 'completed'
+                             OR source.show_completed IS FALSE
+                         )
+                 WHEN requested_section = 'all' THEN
+                     completed_at IS NULL OR requested_show_completed
+                 ELSE
+                     source_section = requested_section
+                         AND (
+                         completed_at IS NULL
+                             OR requested_show_completed
+                         )
+                 END AS is_visible
+         FROM classified
+                  LEFT JOIN task_views AS source
+                            ON source.user_id = classified.user_id
+                                AND source.list_id = classified.list_id
+                                AND source.section = classified.source_section
+     ),
+scoped AS (
+    SELECT
+        task.id, task.user_id, task.title, task.description, task.priority, task.completed_at, task.created_at, task.updated_at, task.deleted_at, task.version, task.due_date, task.due_time, task.list_id, task.requested_section, task.requested_show_completed, task.sort_field, task.sort_direction, task.source_section, task.is_visible,
+        COALESCE(CASE task.sort_field
+                     WHEN 'title' THEN lower(task.title)
+                     WHEN 'due_at' THEN COALESCE(
+                             to_char(task.due_date, 'YYYY-MM-DD') || 'T' ||
+                             to_char(
+                                     COALESCE(task.due_time, time '00:00'),
+                                     'HH24:MI:SS'
+                             ),
+                             ''
+                                        )
+                     WHEN 'created_at' THEN
+                         to_char(
+                                 task.created_at AT TIME ZONE 'UTC',
+                                 'YYYY-MM-DD"T"HH24:MI:SS.US'
+                         )
+                     WHEN 'updated_at' THEN
+                         to_char(
+                                 task.updated_at AT TIME ZONE 'UTC',
+                                 'YYYY-MM-DD"T"HH24:MI:SS.US'
+                         )
+                     WHEN 'priority' THEN CASE task.priority
+                                              WHEN 'none' THEN '0'
+                                              WHEN 'low' THEN '1'
+                                              WHEN 'medium' THEN '2'
+                                              WHEN 'high' THEN '3'
+                         END
+                     END, '')::text AS sort_key
+    FROM visible AS task
+    WHERE task.is_visible
+)
+SELECT id, user_id, title, description, priority, completed_at, created_at, updated_at, deleted_at, version, due_date, due_time, list_id, requested_section, requested_show_completed, sort_field, sort_direction, source_section, is_visible, sort_key FROM scoped
+WHERE (
+    $1::text IS NULL
+    AND $2::uuid IS NULL
+) OR (
+    sort_direction = 'asc'
+    AND (sort_key COLLATE "C", id) > ($1::text COLLATE "C", $2::uuid)
+) OR (
+    sort_direction = 'desc'
+    AND (sort_key COLLATE "C", id) < ($1::text COLLATE "C", $2::uuid)
+)
+ORDER BY
+    CASE WHEN sort_direction = 'asc' THEN sort_key END COLLATE "C" ASC,
+    CASE WHEN sort_direction = 'desc' THEN sort_key END COLLATE "C" DESC,
+    CASE WHEN sort_direction = 'asc' THEN id END ASC,
+    CASE WHEN sort_direction = 'desc' THEN id END DESC
+LIMIT $3
+`
+
+type ListTasksForViewParams struct {
+	CursorSortKey *string
+	CursorID      pgtype.UUID
+	CursorLimit   int32
+	DayStart      pgtype.Timestamptz
+	DayEnd        pgtype.Timestamptz
+	Today         pgtype.Date
+	ViewID        uuid.UUID
+	UserID        uuid.UUID
+}
+
+type ListTasksForViewRow struct {
+	ID                     uuid.UUID
+	UserID                 uuid.UUID
+	Title                  string
+	Description            *string
+	Priority               string
+	CompletedAt            pgtype.Timestamptz
+	CreatedAt              pgtype.Timestamptz
+	UpdatedAt              pgtype.Timestamptz
+	DeletedAt              pgtype.Timestamptz
+	Version                int64
+	DueDate                pgtype.Date
+	DueTime                pgtype.Time
+	ListID                 uuid.UUID
+	RequestedSection       string
+	RequestedShowCompleted bool
+	SortField              string
+	SortDirection          string
+	SourceSection          string
+	IsVisible              interface{}
+	SortKey                string
+}
+
+func (q *Queries) ListTasksForView(ctx context.Context, arg ListTasksForViewParams) ([]ListTasksForViewRow, error) {
+	rows, err := q.db.Query(ctx, listTasksForView,
+		arg.CursorSortKey,
+		arg.CursorID,
+		arg.CursorLimit,
+		arg.DayStart,
+		arg.DayEnd,
+		arg.Today,
+		arg.ViewID,
+		arg.UserID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListTasksForViewRow{}
+	for rows.Next() {
+		var i ListTasksForViewRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Title,
+			&i.Description,
+			&i.Priority,
+			&i.CompletedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+			&i.Version,
+			&i.DueDate,
+			&i.DueTime,
+			&i.ListID,
+			&i.RequestedSection,
+			&i.RequestedShowCompleted,
+			&i.SortField,
+			&i.SortDirection,
+			&i.SourceSection,
+			&i.IsVisible,
+			&i.SortKey,
 		); err != nil {
 			return nil, err
 		}
@@ -202,7 +553,7 @@ SET deleted_at = NULL,
 WHERE user_id = $1
 AND id = $2
 AND deleted_at IS NOT NULL
-RETURNING id, user_id, title, description, priority, completed_at, created_at, updated_at, deleted_at, version
+RETURNING id, user_id, title, description, priority, completed_at, created_at, updated_at, deleted_at, version, due_date, due_time, list_id
 `
 
 type RestoreTaskParams struct {
@@ -224,6 +575,9 @@ func (q *Queries) RestoreTask(ctx context.Context, arg RestoreTaskParams) (Task,
 		&i.UpdatedAt,
 		&i.DeletedAt,
 		&i.Version,
+		&i.DueDate,
+		&i.DueTime,
+		&i.ListID,
 	)
 	return i, err
 }
@@ -237,7 +591,7 @@ SET
 WHERE user_id = $2
 AND id = $3
 AND deleted_at IS NULL
-RETURNING id, user_id, title, description, priority, completed_at, created_at, updated_at, deleted_at, version
+RETURNING id, user_id, title, description, priority, completed_at, created_at, updated_at, deleted_at, version, due_date, due_time, list_id
 `
 
 type SetTaskCompletedParams struct {
@@ -260,6 +614,54 @@ func (q *Queries) SetTaskCompleted(ctx context.Context, arg SetTaskCompletedPara
 		&i.UpdatedAt,
 		&i.DeletedAt,
 		&i.Version,
+		&i.DueDate,
+		&i.DueTime,
+		&i.ListID,
+	)
+	return i, err
+}
+
+const setTaskSchedule = `-- name: SetTaskSchedule :one
+UPDATE tasks
+SET due_date = $1,
+    due_time = $2,
+    updated_at = NOW(),
+    version = version + 1
+WHERE user_id = $3
+AND id = $4
+AND deleted_at IS NULL
+RETURNING id, user_id, title, description, priority, completed_at, created_at, updated_at, deleted_at, version, due_date, due_time, list_id
+`
+
+type SetTaskScheduleParams struct {
+	DueDate pgtype.Date
+	DueTime pgtype.Time
+	UserID  uuid.UUID
+	ID      uuid.UUID
+}
+
+func (q *Queries) SetTaskSchedule(ctx context.Context, arg SetTaskScheduleParams) (Task, error) {
+	row := q.db.QueryRow(ctx, setTaskSchedule,
+		arg.DueDate,
+		arg.DueTime,
+		arg.UserID,
+		arg.ID,
+	)
+	var i Task
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Title,
+		&i.Description,
+		&i.Priority,
+		&i.CompletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.Version,
+		&i.DueDate,
+		&i.DueTime,
+		&i.ListID,
 	)
 	return i, err
 }

@@ -3,9 +3,11 @@ package app
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/DK-0x3/TickTackBackend/internal/config"
 	"github.com/DK-0x3/TickTackBackend/internal/modules/tasks"
+	"github.com/DK-0x3/TickTackBackend/internal/modules/taskviews"
 	"github.com/DK-0x3/TickTackBackend/internal/platform/httpserver"
 	loggerplatform "github.com/DK-0x3/TickTackBackend/internal/platform/logger"
 	"github.com/DK-0x3/TickTackBackend/internal/platform/postgres"
@@ -31,8 +33,10 @@ func Run(ctx context.Context) error {
 	queries := dbsqlc.New(database)
 	taskRepository := tasks.NewRepository(queries)
 	taskService := tasks.NewService(taskRepository)
+	viewRepository := taskviews.NewRepository(queries)
+	viewService := taskviews.NewService(viewRepository, cfg.DevelopmentLocation, time.Now)
 
-	router := newRouter(cfg.Environment, database, taskService, cfg.DevelopmentUserID)
+	router := newRouter(cfg.Environment, database, taskService, viewService, cfg.DevelopmentUserID)
 	server := httpserver.New(cfg.HTTPAddress, router, logger)
 
 	return server.Run(ctx)

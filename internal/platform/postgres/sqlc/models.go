@@ -9,6 +9,17 @@ import (
 	"uuid"
 )
 
+type List struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	Kind      string
+	Title     string
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+	DeletedAt pgtype.Timestamptz
+	Version   int64
+}
+
 type Task struct {
 	ID          uuid.UUID
 	UserID      uuid.UUID
@@ -20,4 +31,21 @@ type Task struct {
 	UpdatedAt   pgtype.Timestamptz
 	DeletedAt   pgtype.Timestamptz
 	Version     int64
+	DueDate     pgtype.Date
+	DueTime     pgtype.Time
+	ListID      uuid.UUID
+}
+
+type TaskView struct {
+	ID            uuid.UUID
+	UserID        uuid.UUID
+	ListID        uuid.UUID
+	Section       string
+	Position      int32
+	SortField     string
+	SortDirection string
+	Version       int64
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+	ShowCompleted bool
 }

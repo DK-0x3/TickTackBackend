@@ -8,12 +8,14 @@ import (
 	"github.com/DK-0x3/TickTackBackend/internal/config"
 	"github.com/DK-0x3/TickTackBackend/internal/modules/health"
 	"github.com/DK-0x3/TickTackBackend/internal/modules/tasks"
+	"github.com/DK-0x3/TickTackBackend/internal/modules/taskviews"
 )
 
 func newRouter(
 	environment config.Environment,
 	database *pgxpool.Pool,
 	taskService tasks.TaskService,
+	viewService taskviews.ViewService,
 	developmentUserID uuid.UUID,
 ) *gin.Engine {
 	if environment == config.EnvironmentProduction {
@@ -24,6 +26,7 @@ func newRouter(
 	router.Use(gin.Recovery())
 	health.RegisterRoutes(router, database)
 	tasks.RegisterRoutes(router, taskService, developmentUserID)
+	taskviews.RegisterRoutes(router, viewService, developmentUserID)
 
 	return router
 }

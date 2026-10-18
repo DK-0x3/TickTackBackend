@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"time"
 	"uuid"
 )
 
@@ -15,10 +16,11 @@ const (
 )
 
 type Config struct {
-	Environment       Environment
-	HTTPAddress       string
-	DatabaseURL       string
-	DevelopmentUserID uuid.UUID
+	Environment         Environment
+	HTTPAddress         string
+	DatabaseURL         string
+	DevelopmentUserID   uuid.UUID
+	DevelopmentLocation *time.Location
 }
 
 func Load() (Config, error) {
@@ -37,6 +39,10 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("parse DEVELOPMENT_USER_ID: %w", err)
 	}
+	developmentLocation, err := time.LoadLocation(getEnv("DEVELOPMENT_TIME_ZONE", "Asia/Yekaterinburg"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse DEVELOPMENT_TIME_ZONE: %w", err)
+	}
 
 	return Config{
 		Environment: environment,
@@ -45,7 +51,8 @@ func Load() (Config, error) {
 			"DATABASE_URL",
 			"postgres://tick_tack:tick_tack@localhost:5435/tick_tack?sslmode=disable",
 		),
-		DevelopmentUserID: developmentUserID,
+		DevelopmentUserID:   developmentUserID,
+		DevelopmentLocation: developmentLocation,
 	}, nil
 }
 

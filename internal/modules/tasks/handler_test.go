@@ -52,6 +52,10 @@ func (stub *serviceStub) SetCompleted(
 	return Task{ID: taskID}, nil
 }
 
+func (stub *serviceStub) SetSchedule(context.Context, uuid.UUID, uuid.UUID, TaskSchedule) (Task, error) {
+	return Task{}, nil
+}
+
 func (stub *serviceStub) Delete(context.Context, uuid.UUID, uuid.UUID) error {
 	return nil
 }
