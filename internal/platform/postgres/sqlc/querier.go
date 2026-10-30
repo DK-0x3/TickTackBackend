@@ -27,6 +27,7 @@ type Querier interface {
 	SaveTaskViewSettings(ctx context.Context, arg SaveTaskViewSettingsParams) (SaveTaskViewSettingsRow, error)
 	SetTaskCompleted(ctx context.Context, arg SetTaskCompletedParams) (Task, error)
 	SetTaskSchedule(ctx context.Context, arg SetTaskScheduleParams) (Task, error)
+	SetTaskViewCollapsed(ctx context.Context, arg SetTaskViewCollapsedParams) (bool, error)
 }
 
 var _ Querier = (*Queries)(nil)

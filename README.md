@@ -84,18 +84,36 @@ fixed `DEVELOPMENT_USER_ID` from application configuration.
 GET   /inbox/views
 GET   /task-views/:viewID/tasks?limit=20&cursor=...
 PATCH /task-views/:viewID/settings
+PATCH /task-views/:viewID/collapse
 ```
 
 `GET /inbox/views` creates missing Inbox metadata for the development user and
 returns its `list_id` and six ordered views. The task endpoint applies that
 view's saved section and sorting rules before cursor pagination. Its response
-has `items`, `next_cursor`, `total`, `completed_total`, `view_version`, and
-`today`. A cursor belongs to one view version and one user-local date; a stale
+has `items`, `next_cursor`, `total`, `completed_total`, `visible_total`,
+`view_version`, `today`, and `next_refresh_at`. A cursor belongs to one view
+version and one user-local date; a stale
 cursor returns HTTP 409, after which the client should restart from page one.
 
-`PATCH /task-views/:viewID/settings` accepts `sort_field`, `sort_direction`, and
-`expected_version`. It returns the updated view, HTTP 400 for invalid settings,
+`PATCH /task-views/:viewID/settings` requires `sort_field`, `sort_direction`,
+`show_completed`, `show_priority`, and `expected_version`. Both boolean fields
+must be present, including when `false`. It returns the updated view, HTTP 400 for invalid settings,
 HTTP 404 if the view is unavailable to the user, or HTTP 409 on a version conflict.
+
+`show_priority` defaults to `true` and controls priority labels in that view.
+When disabled, the Web client uses the completion checkbox color for incomplete
+tasks and exposes a text description of the priority. Task priority and sorting
+are unchanged. Apply migrations through 00006 before running this version of the API;
+Inbox metadata, settings responses and conflict snapshots include `show_priority`.
+
+`PATCH /task-views/:viewID/collapse` accepts `{ "is_collapsed": true }` and
+returns `{ "is_collapsed": true }`. The boolean is required; `false` expands
+the view. Migration 00006 adds `is_collapsed` with default `false`; view metadata
+also includes this field. The update checks the owner and an active source list.
+It changes only `is_collapsed` and `updated_at`, preserving the settings version,
+sort options and task cursors. Concurrent changes use the last applied value.
+The regular settings PATCH never writes this field. Repeating an explicit
+collapse/expand value is safe after an unconfirmed response.
 
 ## Configuration
 

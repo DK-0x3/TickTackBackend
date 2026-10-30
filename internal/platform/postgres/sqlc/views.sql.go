@@ -87,7 +87,7 @@ func (q *Queries) GetInbox(ctx context.Context, userID uuid.UUID) (List, error) 
 }
 
 const getTaskView = `-- name: GetTaskView :one
-SELECT view.id, view.user_id, view.list_id, view.section, view.position, view.sort_field, view.sort_direction, view.version, view.created_at, view.updated_at, view.show_completed
+SELECT view.id, view.user_id, view.list_id, view.section, view.position, view.sort_field, view.sort_direction, view.version, view.created_at, view.updated_at, view.show_completed, view.show_priority, view.is_collapsed
 FROM task_views AS view
 JOIN lists AS list ON list.id = view.list_id AND list.user_id = view.user_id
 WHERE view.id = $1
@@ -115,12 +115,14 @@ func (q *Queries) GetTaskView(ctx context.Context, arg GetTaskViewParams) (TaskV
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ShowCompleted,
+		&i.ShowPriority,
+		&i.IsCollapsed,
 	)
 	return i, err
 }
 
 const listTaskViews = `-- name: ListTaskViews :many
-SELECT view.id, view.user_id, view.list_id, view.section, view.position, view.sort_field, view.sort_direction, view.version, view.created_at, view.updated_at, view.show_completed
+SELECT view.id, view.user_id, view.list_id, view.section, view.position, view.sort_field, view.sort_direction, view.version, view.created_at, view.updated_at, view.show_completed, view.show_priority, view.is_collapsed
 FROM task_views AS view
 JOIN lists AS list ON list.id = view.list_id AND list.user_id = view.user_id
 WHERE view.user_id = $1
@@ -155,6 +157,8 @@ func (q *Queries) ListTaskViews(ctx context.Context, arg ListTaskViewsParams) ([
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.ShowCompleted,
+			&i.ShowPriority,
+			&i.IsCollapsed,
 		); err != nil {
 			return nil, err
 		}
@@ -168,7 +172,7 @@ func (q *Queries) ListTaskViews(ctx context.Context, arg ListTaskViewsParams) ([
 
 const saveTaskViewSettings = `-- name: SaveTaskViewSettings :one
 WITH previous AS (
-    SELECT id, user_id, list_id, section, position, sort_field, sort_direction, version, created_at, updated_at, show_completed
+    SELECT id, user_id, list_id, section, position, sort_field, sort_direction, version, created_at, updated_at, show_completed, show_priority, is_collapsed
     FROM task_views
     WHERE task_views.id = $1
       AND task_views.user_id = $2
@@ -180,11 +184,12 @@ WITH previous AS (
              SET sort_field = $4,
                  sort_direction = $5,
                  show_completed = $6,
+                 show_priority = $7,
                  version = target.version + 1,
                  updated_at = now()
              FROM previous
              WHERE target.id = previous.id
-             RETURNING target.id, target.user_id, target.list_id, target.section, target.position, target.sort_field, target.sort_direction, target.version, target.created_at, target.updated_at, target.show_completed
+             RETURNING target.id, target.user_id, target.list_id, target.section, target.position, target.sort_field, target.sort_direction, target.version, target.created_at, target.updated_at, target.show_completed, target.show_priority, target.is_collapsed
      ),
      completed_updated AS (
          UPDATE task_views AS completed
@@ -201,7 +206,7 @@ WITH previous AS (
                  AND previous.show_completed IS DISTINCT FROM updated.show_completed
              RETURNING completed.id
      )
-SELECT updated.id, updated.user_id, updated.list_id, updated.section, updated.position, updated.sort_field, updated.sort_direction, updated.version, updated.created_at, updated.updated_at, updated.show_completed
+SELECT updated.id, updated.user_id, updated.list_id, updated.section, updated.position, updated.sort_field, updated.sort_direction, updated.version, updated.created_at, updated.updated_at, updated.show_completed, updated.show_priority, updated.is_collapsed
 FROM updated
 `
 
@@ -212,6 +217,7 @@ type SaveTaskViewSettingsParams struct {
 	SortField       string
 	SortDirection   string
 	ShowCompleted   bool
+	ShowPriority    bool
 }
 
 type SaveTaskViewSettingsRow struct {
@@ -226,6 +232,8 @@ type SaveTaskViewSettingsRow struct {
 	CreatedAt     pgtype.Timestamptz
 	UpdatedAt     pgtype.Timestamptz
 	ShowCompleted bool
+	ShowPriority  bool
+	IsCollapsed   bool
 }
 
 func (q *Queries) SaveTaskViewSettings(ctx context.Context, arg SaveTaskViewSettingsParams) (SaveTaskViewSettingsRow, error) {
@@ -236,6 +244,7 @@ func (q *Queries) SaveTaskViewSettings(ctx context.Context, arg SaveTaskViewSett
 		arg.SortField,
 		arg.SortDirection,
 		arg.ShowCompleted,
+		arg.ShowPriority,
 	)
 	var i SaveTaskViewSettingsRow
 	err := row.Scan(
@@ -250,6 +259,34 @@ func (q *Queries) SaveTaskViewSettings(ctx context.Context, arg SaveTaskViewSett
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ShowCompleted,
+		&i.ShowPriority,
+		&i.IsCollapsed,
 	)
 	return i, err
+}
+
+const setTaskViewCollapsed = `-- name: SetTaskViewCollapsed :one
+UPDATE task_views AS view
+SET is_collapsed = $1,
+    updated_at = now()
+FROM lists AS list
+WHERE view.id = $2
+  AND view.user_id = $3
+  AND list.id = view.list_id
+  AND list.user_id = view.user_id
+  AND list.deleted_at IS NULL
+RETURNING view.is_collapsed
+`
+
+type SetTaskViewCollapsedParams struct {
+	IsCollapsed bool
+	ViewID      uuid.UUID
+	UserID      uuid.UUID
+}
+
+func (q *Queries) SetTaskViewCollapsed(ctx context.Context, arg SetTaskViewCollapsedParams) (bool, error) {
+	row := q.db.QueryRow(ctx, setTaskViewCollapsed, arg.IsCollapsed, arg.ViewID, arg.UserID)
+	var is_collapsed bool
+	err := row.Scan(&is_collapsed)
+	return is_collapsed, err
 }

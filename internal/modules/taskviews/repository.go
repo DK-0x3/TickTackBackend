@@ -124,6 +124,7 @@ func (repository *Repository) SaveSettings(ctx context.Context, params UpdateSet
 		SortField:       string(params.SortField),
 		SortDirection:   string(params.SortDirection),
 		ShowCompleted:   params.ShowCompleted,
+		ShowPriority:    params.ShowPriority,
 		ExpectedVersion: params.ExpectedVersion,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -145,6 +146,23 @@ func viewFromDatabase(row dbsqlc.TaskView) View {
 		SortField:     SortField(row.SortField),
 		SortDirection: SortDirection(row.SortDirection),
 		ShowCompleted: row.ShowCompleted,
+		ShowPriority:  row.ShowPriority,
+		IsCollapsed:   row.IsCollapsed,
 		Version:       row.Version,
 	}
+}
+
+func (repository *Repository) SetCollapsed(ctx context.Context, params SetCollapsedParams) (bool, error) {
+	value, err := repository.queries.SetTaskViewCollapsed(ctx, dbsqlc.SetTaskViewCollapsedParams{
+		ViewID:      params.ViewID,
+		UserID:      params.UserID,
+		IsCollapsed: params.IsCollapsed,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, ErrNotFound
+	}
+	if err != nil {
+		return false, fmt.Errorf("set task view collapsed: %w", err)
+	}
+	return value, nil
 }

@@ -15,6 +15,7 @@ type ViewService interface {
 	InboxViews(ctx context.Context, userID uuid.UUID) (uuid.UUID, []View, error)
 	ListTasks(ctx context.Context, params ListTasksParams) (TaskPage, error)
 	UpdateViewSettings(ctx context.Context, params UpdateSettingsParams) (View, error)
+	SetCollapsed(ctx context.Context, params SetCollapsedParams) (bool, error)
 }
 
 type Handler struct {
@@ -27,6 +28,31 @@ func RegisterRoutes(router gin.IRoutes, service ViewService, userID uuid.UUID) {
 	router.GET("/inbox/views", handler.inboxViews)
 	router.GET("/task-views/:viewID/tasks", handler.listTasks)
 	router.PATCH("/task-views/:viewID/settings", handler.updateSettings)
+	router.PATCH("/task-views/:viewID/collapse", handler.setCollapsed)
+}
+
+func (handler Handler) setCollapsed(ctx *gin.Context) {
+	viewID, ok := parseViewID(ctx)
+	if !ok {
+		return
+	}
+	var request struct {
+		IsCollapsed *bool `json:"is_collapsed"`
+	}
+	if err := ctx.ShouldBindJSON(&request); err != nil || request.IsCollapsed == nil {
+		respondViewError(ctx, ErrInvalidRequest)
+		return
+	}
+	value, err := handler.service.SetCollapsed(ctx.Request.Context(), SetCollapsedParams{
+		UserID:      handler.userID,
+		ViewID:      viewID,
+		IsCollapsed: *request.IsCollapsed,
+	})
+	if err != nil {
+		respondViewError(ctx, err)
+		return
+	}
+	ctx.JSON(http.StatusOK, gin.H{"is_collapsed": value})
 }
 
 func (handler Handler) inboxViews(ctx *gin.Context) {
@@ -87,6 +113,7 @@ func (handler Handler) updateSettings(ctx *gin.Context) {
 		SortField       SortField     `json:"sort_field"`
 		SortDirection   SortDirection `json:"sort_direction"`
 		ShowCompleted   *bool         `json:"show_completed"`
+		ShowPriority    *bool         `json:"show_priority"`
 		ExpectedVersion *int64        `json:"expected_version"`
 	}
 	err := ctx.ShouldBindJSON(&request)
@@ -99,6 +126,9 @@ func (handler Handler) updateSettings(ctx *gin.Context) {
 	} else if request.ShowCompleted == nil {
 		respondViewError(ctx, ErrInvalidShowCompleted)
 		return
+	} else if request.ShowPriority == nil {
+		respondViewError(ctx, ErrInvalidShowPriority)
+		return
 	}
 
 	view, err := handler.service.UpdateViewSettings(ctx.Request.Context(), UpdateSettingsParams{
@@ -107,6 +137,7 @@ func (handler Handler) updateSettings(ctx *gin.Context) {
 		SortField:       request.SortField,
 		SortDirection:   request.SortDirection,
 		ShowCompleted:   *request.ShowCompleted,
+		ShowPriority:    *request.ShowPriority,
 		ExpectedVersion: *request.ExpectedVersion,
 	})
 	if err != nil {
@@ -141,7 +172,7 @@ func respondViewError(ctx *gin.Context, err error) {
 		status, code, message = http.StatusNotFound, "view_not_found", ErrNotFound.Error()
 	case errors.Is(err, ErrInvalidSortField), errors.Is(err, ErrInvalidSortDirection),
 		errors.Is(err, ErrInvalidExpectedVersion), errors.Is(err, ErrInvalidCursor),
-		errors.Is(err, ErrInvalidLimit), errors.Is(err, ErrInvalidShowCompleted), errors.Is(err, ErrInvalidRequest):
+		errors.Is(err, ErrInvalidLimit), errors.Is(err, ErrInvalidShowCompleted), errors.Is(err, ErrInvalidShowPriority), errors.Is(err, ErrInvalidRequest):
 		status, code, message = http.StatusBadRequest, "validation_failed", err.Error()
 	case errors.Is(err, ErrStaleCursor):
 		status, code, message = http.StatusConflict, "view_conflict", err.Error()
@@ -157,13 +188,22 @@ type viewResponse struct {
 	SortField     SortField     `json:"sort_field"`
 	SortDirection SortDirection `json:"sort_direction"`
 	ShowCompleted bool          `json:"show_completed"`
+	ShowPriority  bool          `json:"show_priority"`
+	IsCollapsed   bool          `json:"is_collapsed"`
 	Version       int64         `json:"version"`
 }
 
 func newViewResponse(view View) viewResponse {
 	return viewResponse{
-		ID: view.ID, ListID: view.ListID, Section: view.Section, Position: view.Position,
-		SortField: view.SortField, SortDirection: view.SortDirection, ShowCompleted: view.ShowCompleted,
-		Version: view.Version,
+		ID:            view.ID,
+		ListID:        view.ListID,
+		Section:       view.Section,
+		Position:      view.Position,
+		SortField:     view.SortField,
+		SortDirection: view.SortDirection,
+		ShowCompleted: view.ShowCompleted,
+		ShowPriority:  view.ShowPriority,
+		IsCollapsed:   view.IsCollapsed,
+		Version:       view.Version,
 	}
 }

@@ -24,6 +24,7 @@ type ViewRepository interface {
 		dayEnd time.Time,
 	) (Counts, error)
 	SaveSettings(context.Context, UpdateSettingsParams) (View, error)
+	SetCollapsed(context.Context, SetCollapsedParams) (bool, error)
 }
 
 type Service struct {
@@ -38,6 +39,10 @@ func NewService(repository ViewRepository, location *time.Location, clock func()
 
 func (service *Service) InboxViews(ctx context.Context, userID uuid.UUID) (uuid.UUID, []View, error) {
 	return service.repository.InboxViews(ctx, userID)
+}
+
+func (service *Service) SetCollapsed(ctx context.Context, params SetCollapsedParams) (bool, error) {
+	return service.repository.SetCollapsed(ctx, params)
 }
 
 func (service *Service) ListTasks(ctx context.Context, params ListTasksParams) (TaskPage, error) {

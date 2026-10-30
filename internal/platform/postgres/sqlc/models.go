@@ -48,4 +48,6 @@ type TaskView struct {
 	CreatedAt     pgtype.Timestamptz
 	UpdatedAt     pgtype.Timestamptz
 	ShowCompleted bool
+	ShowPriority  bool
+	IsCollapsed   bool
 }

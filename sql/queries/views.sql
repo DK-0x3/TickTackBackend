@@ -58,6 +58,7 @@ WITH previous AS (
              SET sort_field = sqlc.arg(sort_field),
                  sort_direction = sqlc.arg(sort_direction),
                  show_completed = sqlc.arg(show_completed),
+                 show_priority = sqlc.arg(show_priority),
                  version = target.version + 1,
                  updated_at = now()
              FROM previous
@@ -81,3 +82,15 @@ WITH previous AS (
      )
 SELECT updated.*
 FROM updated;
+
+-- name: SetTaskViewCollapsed :one
+UPDATE task_views AS view
+SET is_collapsed = sqlc.arg(is_collapsed),
+    updated_at = now()
+FROM lists AS list
+WHERE view.id = sqlc.arg(view_id)
+  AND view.user_id = sqlc.arg(user_id)
+  AND list.id = view.list_id
+  AND list.user_id = view.user_id
+  AND list.deleted_at IS NULL
+RETURNING view.is_collapsed;

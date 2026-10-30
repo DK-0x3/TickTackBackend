@@ -14,7 +14,8 @@ var (
 	ErrInvalidSortDirection   = errors.New("invalid sort direction")
 	ErrInvalidExpectedVersion = errors.New("invalid expected version")
 	ErrInvalidRequest         = errors.New("invalid request")
-	ErrInvalidShowCompleted   = errors.New("invalid show competed")
+	ErrInvalidShowCompleted   = errors.New("invalid show completed")
+	ErrInvalidShowPriority    = errors.New("invalid show priority")
 	ErrVersionConflict        = errors.New("task view version conflict")
 	ErrInvalidCursor          = errors.New("invalid task view cursor")
 	ErrStaleCursor            = errors.New("task view cursor is stale")
@@ -72,7 +73,15 @@ type View struct {
 	SortField     SortField
 	SortDirection SortDirection
 	ShowCompleted bool
+	ShowPriority  bool
+	IsCollapsed   bool
 	Version       int64
+}
+
+type SetCollapsedParams struct {
+	UserID      uuid.UUID
+	ViewID      uuid.UUID
+	IsCollapsed bool
 }
 
 type UpdateSettingsParams struct {
@@ -81,6 +90,7 @@ type UpdateSettingsParams struct {
 	SortField       SortField
 	SortDirection   SortDirection
 	ShowCompleted   bool
+	ShowPriority    bool
 	ExpectedVersion int64
 }
 

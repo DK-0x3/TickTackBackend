@@ -52,6 +52,10 @@ func TestRepositoryAndServiceWithPostgres(t *testing.T) {
 	for _, path := range []string{
 		"../../../migrations/00001_create_tasks.sql",
 		"../../../migrations/00002_add_task_schedule.sql",
+		"../../../migrations/00003_create_lists_and_views.sql",
+		"../../../migrations/00004_add_show_completed.sql",
+		"../../../migrations/00005_add_show_priority.sql",
+		"../../../migrations/00006_add_view_collapsed.sql",
 	} {
 		migration, err := os.ReadFile(path)
 		if err != nil {
