@@ -7,16 +7,12 @@ import (
 	"net/http"
 	"uuid"
 
-	"github.com/DK-0x3/TickTackBackend/internal/platform/httpquery"
 	"github.com/gin-gonic/gin"
 )
 
-const defaultLimit = 20
-const maxPageSize = 100
-
 type TaskService interface {
+	SetTitle(context.Context, RenameParams) (Task, error)
 	Create(context.Context, CreateParams) (Task, error)
-	List(context.Context, ListParams) (ListPage, error)
 	Get(context.Context, uuid.UUID, uuid.UUID) (Task, error)
 	SetCompleted(context.Context, uuid.UUID, uuid.UUID, bool) (Task, error)
 	SetSchedule(context.Context, uuid.UUID, uuid.UUID, TaskSchedule) (Task, error)
@@ -33,7 +29,7 @@ func RegisterRoutes(router gin.IRoutes, service TaskService, userID uuid.UUID) {
 	handler := Handler{service: service, userID: userID}
 
 	router.POST("/tasks", handler.create)
-	router.GET("/tasks", handler.list)
+	router.PATCH("/tasks/:id/title", handler.setTitle)
 	router.GET("/tasks/:id", handler.get)
 	router.PATCH("/tasks/:id/completion", handler.setCompleted)
 	router.PATCH("/tasks/:id/schedule", handler.setSchedule)
@@ -67,41 +63,6 @@ func (handler Handler) create(ctx *gin.Context) {
 	}
 
 	ctx.JSON(http.StatusCreated, NewTaskResponse(task))
-}
-
-func (handler Handler) list(ctx *gin.Context) {
-	pagination, paginationErr := httpquery.ParsePagination(
-		ctx.Request.URL.Query(),
-		defaultLimit,
-		maxPageSize,
-	)
-	if paginationErr != nil {
-		respondError(ctx, http.StatusBadRequest, "invalid_pagination", "Pagination parameters are invalid")
-		return
-	}
-
-	var cursor *ListCursor
-	if pagination.Cursor != "" {
-		decodedCursor, err := decodeTaskCursor(pagination.Cursor)
-		if err != nil {
-			respondError(ctx, http.StatusBadRequest, "invalid_pagination", "Pagination parameters are invalid")
-			return
-		}
-		cursor = &decodedCursor
-	}
-
-	page, err := handler.service.List(ctx.Request.Context(),
-		ListParams{
-			UserID: handler.userID,
-			Cursor: cursor,
-			Limit:  pagination.Limit,
-		})
-	if err != nil {
-		respondTaskError(ctx, err)
-		return
-	}
-
-	ctx.JSON(http.StatusOK, newTaskListResponse(page))
 }
 
 func (handler Handler) get(ctx *gin.Context) {
@@ -215,8 +176,13 @@ func parseTaskID(ctx *gin.Context) (uuid.UUID, bool) {
 }
 
 func respondTaskError(ctx *gin.Context, err error) {
+	var conflict *VersionConflictError
+	if errors.As(err, &conflict) {
+		ctx.JSON(http.StatusConflict, gin.H{"error": errorBody{Code: "task_conflict", Message: ErrVersionConflict.Error()}, "current_task": NewTaskResponse(conflict.Current)})
+		return
+	}
 	switch {
-	case errors.Is(err, ErrTitleRequired),
+	case errors.Is(err, ErrInvalidExpectedVersion), errors.Is(err, ErrTitleRequired),
 		errors.Is(err, ErrTitleTooLong),
 		errors.Is(err, ErrDescriptionTooLong),
 		errors.Is(err, ErrInvalidPriority),
@@ -233,4 +199,27 @@ func respondTaskError(ctx *gin.Context, err error) {
 
 func respondError(ctx *gin.Context, status int, code, message string) {
 	ctx.JSON(status, errorResponse{Error: errorBody{Code: code, Message: message}})
+}
+
+func (handler Handler) setTitle(ctx *gin.Context) {
+	id, ok := parseTaskID(ctx)
+	if !ok {
+		return
+	}
+	var request struct {
+		Title           *string `json:"title"`
+		ExpectedVersion *int64  `json:"expected_version"`
+	}
+	if err := ctx.ShouldBindJSON(&request); err != nil || request.Title == nil || request.ExpectedVersion == nil {
+		respondError(ctx, http.StatusBadRequest, "invalid_request", "Request body is invalid")
+		return
+	}
+	task, err := handler.service.SetTitle(ctx.Request.Context(), RenameParams{
+		UserID: handler.userID, TaskID: id, Title: *request.Title, ExpectedVersion: *request.ExpectedVersion,
+	})
+	if err != nil {
+		respondTaskError(ctx, err)
+		return
+	}
+	ctx.JSON(http.StatusOK, NewTaskResponse(task))
 }

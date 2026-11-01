@@ -58,25 +58,9 @@ type TaskSchedule struct {
 	DueTime *string
 }
 
-type ListParams struct {
-	UserID uuid.UUID
-	Cursor *ListCursor
-	Limit  int
-}
-
-type ListCursor struct {
-	CreatedAt time.Time
-	ID        uuid.UUID
-}
-
-type ListPage struct {
-	Items          []Task
-	NextCursor     *ListCursor
-	Total          int64
-	CompletedTotal int64
-}
-
-type TaskCounts struct {
-	Total          int64
-	CompletedTotal int64
+type RenameParams struct {
+	UserID          uuid.UUID
+	TaskID          uuid.UUID
+	Title           string
+	ExpectedVersion int64
 }

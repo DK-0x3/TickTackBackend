@@ -26,38 +26,6 @@ SELECT
 FROM inbox
 RETURNING *;
 
--- name: ListTasks :many
-SELECT task.* FROM tasks AS task
-JOIN lists AS list ON list.id = task.list_id AND list.user_id = task.user_id
-WHERE task.user_id = sqlc.arg(user_id)
-AND list.kind = 'inbox'
-AND list.deleted_at IS NULL
-AND task.deleted_at IS NULL
-AND (
-    (
-        sqlc.narg(cursor_created_at)::timestamptz IS NULL
-        AND sqlc.narg(cursor_id)::uuid IS NULL
-    )
-    OR
-    (task.created_at, task.id) < (
-        sqlc.narg(cursor_created_at)::timestamptz,
-        sqlc.narg(cursor_id)::uuid
-    )
-)
-ORDER BY task.created_at DESC, task.id DESC
-LIMIT sqlc.arg(cursor_limit);
-
--- name: CountTasks :one
-SELECT
-    count(*) AS total,
-    count(*) FILTER (WHERE completed_at IS NOT NULL) AS completed_total
-FROM tasks
-JOIN lists AS list ON list.id = tasks.list_id AND list.user_id = tasks.user_id
-WHERE tasks.user_id = sqlc.arg(user_id)
-AND list.kind = 'inbox'
-AND list.deleted_at IS NULL
-AND tasks.deleted_at IS NULL;
-
 -- name: GetTask :one
 SELECT * FROM tasks
 WHERE user_id = sqlc.arg(user_id)
@@ -311,3 +279,14 @@ ORDER BY
     CASE WHEN sort_direction = 'asc' THEN id END ASC,
     CASE WHEN sort_direction = 'desc' THEN id END DESC
 LIMIT sqlc.arg(cursor_limit);
+
+-- name: SetTaskTitle :one
+UPDATE tasks
+SET title = sqlc.arg(title)::text,
+    updated_at = CASE WHEN title IS DISTINCT FROM sqlc.arg(title)::text THEN NOW() ELSE updated_at END,
+    version = version + CASE WHEN title IS DISTINCT FROM sqlc.arg(title)::text THEN 1 ELSE 0 END
+WHERE user_id = sqlc.arg(user_id)
+AND id = sqlc.arg(id)
+AND deleted_at IS NULL
+AND version = sqlc.arg(expected_version)
+RETURNING *;

@@ -42,42 +42,6 @@ func (repository *Repository) Create(ctx context.Context, params CreateParams) (
 	return taskFromDatabase(task), nil
 }
 
-func (repository *Repository) List(ctx context.Context, params ListParams) ([]Task, error) {
-	var cursorCreatedAt pgtype.Timestamptz
-	var cursorID pgtype.UUID
-	if params.Cursor != nil {
-		cursorCreatedAt = pgtype.Timestamptz{Time: params.Cursor.CreatedAt, Valid: true}
-		cursorID = pgtype.UUID{Bytes: params.Cursor.ID, Valid: true}
-	}
-
-	databaseTasks, err := repository.queries.ListTasks(ctx,
-		dbsqlc.ListTasksParams{
-			UserID:          params.UserID,
-			CursorCreatedAt: cursorCreatedAt,
-			CursorID:        cursorID,
-			CursorLimit:     int32(params.Limit),
-		})
-	if err != nil {
-		return nil, fmt.Errorf("list tasks: %w", err)
-	}
-
-	tasks := make([]Task, 0, len(databaseTasks))
-	for _, databaseTask := range databaseTasks {
-		tasks = append(tasks, taskFromDatabase(databaseTask))
-	}
-
-	return tasks, nil
-}
-
-func (repository *Repository) Count(ctx context.Context, userID uuid.UUID) (TaskCounts, error) {
-	counts, err := repository.queries.CountTasks(ctx, userID)
-	if err != nil {
-		return TaskCounts{}, fmt.Errorf("count tasks: %w", err)
-	}
-
-	return TaskCounts{Total: counts.Total, CompletedTotal: counts.CompletedTotal}, nil
-}
-
 func (repository *Repository) Get(
 	ctx context.Context,
 	userID uuid.UUID,
@@ -257,4 +221,21 @@ func nullableTime(value time.Time, valid bool) *time.Time {
 	}
 
 	return &value
+}
+
+func (repository *Repository) SetTitle(ctx context.Context, params RenameParams) (Task, error) {
+	row, err := repository.queries.SetTaskTitle(ctx, dbsqlc.SetTaskTitleParams{
+		UserID: params.UserID, ID: params.TaskID, Title: params.Title, ExpectedVersion: params.ExpectedVersion,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		current, readErr := repository.Get(ctx, params.UserID, params.TaskID)
+		if readErr != nil {
+			return Task{}, readErr
+		}
+		return Task{}, &VersionConflictError{Current: current}
+	}
+	if err != nil {
+		return Task{}, repositoryError("set task title", err)
+	}
+	return taskFromDatabase(row), nil
 }

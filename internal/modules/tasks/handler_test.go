@@ -2,13 +2,11 @@ package tasks
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 	"uuid"
 
 	"github.com/gin-gonic/gin"
@@ -18,9 +16,6 @@ type serviceStub struct {
 	createParams       CreateParams
 	createResult       Task
 	createError        error
-	listParams         ListParams
-	listResult         ListPage
-	listError          error
 	getCalls           int
 	setCompletedTaskID uuid.UUID
 	setCompletedValue  bool
@@ -29,11 +24,6 @@ type serviceStub struct {
 func (stub *serviceStub) Create(_ context.Context, params CreateParams) (Task, error) {
 	stub.createParams = params
 	return stub.createResult, stub.createError
-}
-
-func (stub *serviceStub) List(_ context.Context, params ListParams) (ListPage, error) {
-	stub.listParams = params
-	return stub.listResult, stub.listError
 }
 
 func (stub *serviceStub) Get(context.Context, uuid.UUID, uuid.UUID) (Task, error) {
@@ -184,53 +174,4 @@ func TestRespondTaskErrorMapsNotFound(t *testing.T) {
 	}
 }
 
-func TestHandlerListReturnsPageAndTotal(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	userID := uuid.NewV7()
-	createdAt := time.Date(2026, time.September, 25, 12, 0, 0, 0, time.UTC)
-	task := Task{ID: uuid.NewV7(), UserID: userID, Title: "Task", Priority: PriorityNone, CreatedAt: createdAt}
-	nextCursor := &ListCursor{ID: task.ID, CreatedAt: createdAt}
-	previousCursor := ListCursor{ID: uuid.NewV7(), CreatedAt: createdAt.Add(time.Hour)}
-	service := &serviceStub{listResult: ListPage{Items: []Task{task}, NextCursor: nextCursor, Total: 5, CompletedTotal: 2}}
-	router := gin.New()
-	RegisterRoutes(router, service, userID)
-
-	request := httptest.NewRequest(http.MethodGet, "/tasks?limit=1&cursor="+encodeTaskCursor(previousCursor), nil)
-	recorder := httptest.NewRecorder()
-	router.ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body = %s", recorder.Code, recorder.Body.String())
-	}
-	if service.listParams.UserID != userID || service.listParams.Limit != 1 || service.listParams.Cursor == nil || service.listParams.Cursor.ID != previousCursor.ID {
-		t.Fatalf("List() params = %#v", service.listParams)
-	}
-	var response taskListResponse
-	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if len(response.Items) != 1 || response.Items[0].ID != task.ID || response.Total != 5 || response.CompletedTotal != 2 {
-		t.Fatalf("response = %#v, want one task, total 5 and completed total 2", response)
-	}
-	if response.NextCursor == nil || *response.NextCursor != encodeTaskCursor(*nextCursor) {
-		t.Fatalf("next cursor = %v, want encoded cursor", response.NextCursor)
-	}
-}
-
-func TestHandlerListRejectsInvalidPagination(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	for _, query := range []string{"limit=0", "limit=101", "limit=x", "limit=1&limit=2", "cursor=bad", "cursor="} {
-		t.Run(query, func(t *testing.T) {
-			service := &serviceStub{}
-			router := gin.New()
-			RegisterRoutes(router, service, uuid.NewV7())
-			recorder := httptest.NewRecorder()
-			router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/tasks?"+query, nil))
-			if recorder.Code != http.StatusBadRequest {
-				t.Fatalf("status = %d, want 400; body = %s", recorder.Code, recorder.Body.String())
-			}
-			if service.listParams.UserID != uuid.Nil() {
-				t.Fatal("List() must not be called for invalid pagination")
-			}
-		})
-	}
-}
+func (stub *serviceStub) SetTitle(context.Context, RenameParams) (Task, error) { return Task{}, nil }

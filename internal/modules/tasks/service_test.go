@@ -13,13 +13,6 @@ type repositoryStub struct {
 	createParams       CreateParams
 	createResult       Task
 	createError        error
-	listUserID         uuid.UUID
-	listParams         ListParams
-	listResult         []Task
-	listError          error
-	countUserID        uuid.UUID
-	countResult        TaskCounts
-	countError         error
 	getUserID          uuid.UUID
 	getTaskID          uuid.UUID
 	getResult          Task
@@ -35,17 +28,6 @@ func (stub *repositoryStub) Create(_ context.Context, params CreateParams) (Task
 	stub.createCalls++
 	stub.createParams = params
 	return stub.createResult, stub.createError
-}
-
-func (stub *repositoryStub) List(_ context.Context, params ListParams) ([]Task, error) {
-	stub.listUserID = params.UserID
-	stub.listParams = params
-	return stub.listResult, stub.listError
-}
-
-func (stub *repositoryStub) Count(_ context.Context, userID uuid.UUID) (TaskCounts, error) {
-	stub.countUserID = userID
-	return stub.countResult, stub.countError
 }
 
 func (stub *repositoryStub) Get(
@@ -189,18 +171,10 @@ func TestServiceDelegatesQueries(t *testing.T) {
 	taskID := uuid.NewV7()
 	expectedError := errors.New("repository failed")
 	repository := &repositoryStub{
-		listError:         expectedError,
 		getError:          expectedError,
 		setCompletedError: expectedError,
 	}
 	service := NewService(repository)
-
-	if _, err := service.List(context.Background(), ListParams{UserID: userID, Limit: 20}); !errors.Is(err, expectedError) {
-		t.Fatalf("List() error = %v, want %v", err, expectedError)
-	}
-	if repository.listUserID != userID {
-		t.Errorf("List() user ID = %s, want %s", repository.listUserID, userID)
-	}
 
 	if _, err := service.Get(context.Background(), userID, taskID); !errors.Is(err, expectedError) {
 		t.Fatalf("Get() error = %v, want %v", err, expectedError)
@@ -229,3 +203,5 @@ func TestServiceDelegatesQueries(t *testing.T) {
 func stringPointer(value string) *string {
 	return &value
 }
+
+func (stub *repositoryStub) SetTitle(context.Context, RenameParams) (Task, error) { return Task{}, nil }

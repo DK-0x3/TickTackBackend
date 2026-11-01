@@ -11,7 +11,6 @@ import (
 )
 
 type Querier interface {
-	CountTasks(ctx context.Context, userID uuid.UUID) (CountTasksRow, error)
 	CountTasksForView(ctx context.Context, arg CountTasksForViewParams) (CountTasksForViewRow, error)
 	CreateTask(ctx context.Context, arg CreateTaskParams) (Task, error)
 	DeleteTask(ctx context.Context, arg DeleteTaskParams) (int64, error)
@@ -21,12 +20,12 @@ type Querier interface {
 	GetTask(ctx context.Context, arg GetTaskParams) (Task, error)
 	GetTaskView(ctx context.Context, arg GetTaskViewParams) (TaskView, error)
 	ListTaskViews(ctx context.Context, arg ListTaskViewsParams) ([]TaskView, error)
-	ListTasks(ctx context.Context, arg ListTasksParams) ([]Task, error)
 	ListTasksForView(ctx context.Context, arg ListTasksForViewParams) ([]ListTasksForViewRow, error)
 	RestoreTask(ctx context.Context, arg RestoreTaskParams) (Task, error)
 	SaveTaskViewSettings(ctx context.Context, arg SaveTaskViewSettingsParams) (SaveTaskViewSettingsRow, error)
 	SetTaskCompleted(ctx context.Context, arg SetTaskCompletedParams) (Task, error)
 	SetTaskSchedule(ctx context.Context, arg SetTaskScheduleParams) (Task, error)
+	SetTaskTitle(ctx context.Context, arg SetTaskTitleParams) (Task, error)
 	SetTaskViewCollapsed(ctx context.Context, arg SetTaskViewCollapsedParams) (bool, error)
 }
 

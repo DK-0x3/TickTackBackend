@@ -9,9 +9,8 @@ import (
 )
 
 type TaskRepository interface {
+	SetTitle(context.Context, RenameParams) (Task, error)
 	Create(ctx context.Context, params CreateParams) (Task, error)
-	List(ctx context.Context, params ListParams) ([]Task, error)
-	Count(ctx context.Context, userID uuid.UUID) (TaskCounts, error)
 	Get(ctx context.Context, userID uuid.UUID, taskID uuid.UUID) (Task, error)
 	SetCompleted(ctx context.Context, userID uuid.UUID, taskID uuid.UUID, completed bool) (Task, error)
 	SetSchedule(ctx context.Context, userID uuid.UUID, taskID uuid.UUID, schedule TaskSchedule) (Task, error)
@@ -88,42 +87,6 @@ func validateSchedule(schedule TaskSchedule) error {
 	return nil
 }
 
-func (service *Service) List(ctx context.Context, params ListParams) (ListPage, error) {
-	limit := params.Limit + 1
-	tasks, err := service.repository.List(ctx, ListParams{
-		UserID: params.UserID,
-		Cursor: params.Cursor,
-		Limit:  limit,
-	})
-	if err != nil {
-		return ListPage{}, err
-	}
-
-	var nextCursor *ListCursor
-	if len(tasks) == limit {
-		tasks = tasks[:len(tasks)-1]
-
-		lastTask := tasks[len(tasks)-1]
-		value := ListCursor{
-			ID:        lastTask.ID,
-			CreatedAt: lastTask.CreatedAt,
-		}
-		nextCursor = &value
-	}
-
-	counts, err := service.repository.Count(ctx, params.UserID)
-	if err != nil {
-		return ListPage{}, err
-	}
-
-	return ListPage{
-		Items:          tasks,
-		NextCursor:     nextCursor,
-		Total:          counts.Total,
-		CompletedTotal: counts.CompletedTotal,
-	}, nil
-}
-
 func (service *Service) Get(
 	ctx context.Context,
 	userID uuid.UUID,
@@ -160,4 +123,18 @@ func (service *Service) Delete(ctx context.Context, userID uuid.UUID, taskID uui
 
 func (service *Service) Restore(ctx context.Context, userID uuid.UUID, taskID uuid.UUID) (Task, error) {
 	return service.repository.Restore(ctx, userID, taskID)
+}
+
+func (service *Service) SetTitle(ctx context.Context, params RenameParams) (Task, error) {
+	params.Title = strings.TrimSpace(params.Title)
+	if params.Title == "" {
+		return Task{}, ErrTitleRequired
+	}
+	if utf8.RuneCountInString(params.Title) > MaxTitleLength {
+		return Task{}, ErrTitleTooLong
+	}
+	if params.ExpectedVersion < 1 {
+		return Task{}, ErrInvalidExpectedVersion
+	}
+	return service.repository.SetTitle(ctx, params)
 }

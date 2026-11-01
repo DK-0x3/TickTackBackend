@@ -12,30 +12,6 @@ import (
 	"uuid"
 )
 
-const countTasks = `-- name: CountTasks :one
-SELECT
-    count(*) AS total,
-    count(*) FILTER (WHERE completed_at IS NOT NULL) AS completed_total
-FROM tasks
-JOIN lists AS list ON list.id = tasks.list_id AND list.user_id = tasks.user_id
-WHERE tasks.user_id = $1
-AND list.kind = 'inbox'
-AND list.deleted_at IS NULL
-AND tasks.deleted_at IS NULL
-`
-
-type CountTasksRow struct {
-	Total          int64
-	CompletedTotal int64
-}
-
-func (q *Queries) CountTasks(ctx context.Context, userID uuid.UUID) (CountTasksRow, error) {
-	row := q.db.QueryRow(ctx, countTasks, userID)
-	var i CountTasksRow
-	err := row.Scan(&i.Total, &i.CompletedTotal)
-	return i, err
-}
-
 const countTasksForView = `-- name: CountTasksForView :one
 WITH classified AS (
     SELECT
@@ -270,74 +246,6 @@ func (q *Queries) GetTask(ctx context.Context, arg GetTaskParams) (Task, error) 
 		&i.ListID,
 	)
 	return i, err
-}
-
-const listTasks = `-- name: ListTasks :many
-SELECT task.id, task.user_id, task.title, task.description, task.priority, task.completed_at, task.created_at, task.updated_at, task.deleted_at, task.version, task.due_date, task.due_time, task.list_id FROM tasks AS task
-JOIN lists AS list ON list.id = task.list_id AND list.user_id = task.user_id
-WHERE task.user_id = $1
-AND list.kind = 'inbox'
-AND list.deleted_at IS NULL
-AND task.deleted_at IS NULL
-AND (
-    (
-        $2::timestamptz IS NULL
-        AND $3::uuid IS NULL
-    )
-    OR
-    (task.created_at, task.id) < (
-        $2::timestamptz,
-        $3::uuid
-    )
-)
-ORDER BY task.created_at DESC, task.id DESC
-LIMIT $4
-`
-
-type ListTasksParams struct {
-	UserID          uuid.UUID
-	CursorCreatedAt pgtype.Timestamptz
-	CursorID        pgtype.UUID
-	CursorLimit     int32
-}
-
-func (q *Queries) ListTasks(ctx context.Context, arg ListTasksParams) ([]Task, error) {
-	rows, err := q.db.Query(ctx, listTasks,
-		arg.UserID,
-		arg.CursorCreatedAt,
-		arg.CursorID,
-		arg.CursorLimit,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []Task{}
-	for rows.Next() {
-		var i Task
-		if err := rows.Scan(
-			&i.ID,
-			&i.UserID,
-			&i.Title,
-			&i.Description,
-			&i.Priority,
-			&i.CompletedAt,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.DeletedAt,
-			&i.Version,
-			&i.DueDate,
-			&i.DueTime,
-			&i.ListID,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const listTasksForView = `-- name: ListTasksForView :many
@@ -646,6 +554,51 @@ func (q *Queries) SetTaskSchedule(ctx context.Context, arg SetTaskScheduleParams
 		arg.DueTime,
 		arg.UserID,
 		arg.ID,
+	)
+	var i Task
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Title,
+		&i.Description,
+		&i.Priority,
+		&i.CompletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.Version,
+		&i.DueDate,
+		&i.DueTime,
+		&i.ListID,
+	)
+	return i, err
+}
+
+const setTaskTitle = `-- name: SetTaskTitle :one
+UPDATE tasks
+SET title = $1::text,
+    updated_at = CASE WHEN title IS DISTINCT FROM $1::text THEN NOW() ELSE updated_at END,
+    version = version + CASE WHEN title IS DISTINCT FROM $1::text THEN 1 ELSE 0 END
+WHERE user_id = $2
+AND id = $3
+AND deleted_at IS NULL
+AND version = $4
+RETURNING id, user_id, title, description, priority, completed_at, created_at, updated_at, deleted_at, version, due_date, due_time, list_id
+`
+
+type SetTaskTitleParams struct {
+	Title           string
+	UserID          uuid.UUID
+	ID              uuid.UUID
+	ExpectedVersion int64
+}
+
+func (q *Queries) SetTaskTitle(ctx context.Context, arg SetTaskTitleParams) (Task, error) {
+	row := q.db.QueryRow(ctx, setTaskTitle,
+		arg.Title,
+		arg.UserID,
+		arg.ID,
+		arg.ExpectedVersion,
 	)
 	var i Task
 	err := row.Scan(

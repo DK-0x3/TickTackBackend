@@ -6,7 +6,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 	"uuid"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -68,18 +67,13 @@ func TestRepositoryAndServiceWithPostgres(t *testing.T) {
 	}
 
 	repository := NewRepository(dbsqlc.New(pool))
-	service := NewService(repository)
 	userID := uuid.NewV7()
 	otherUserID := uuid.NewV7()
-	baseTime := time.Date(2026, time.September, 25, 12, 0, 0, 0, time.UTC)
 	created := make([]Task, 0, 3)
-	for index, title := range []string{"old", "middle", "new"} {
+	for _, title := range []string{"old", "middle", "new"} {
 		task, err := repository.Create(ctx, CreateParams{UserID: userID, Title: title, Priority: PriorityNone})
 		if err != nil {
 			t.Fatalf("create %s: %v", title, err)
-		}
-		if _, err := pool.Exec(ctx, "UPDATE tasks SET created_at = $1 WHERE id = $2", baseTime.Add(time.Duration(index)*time.Minute), task.ID); err != nil {
-			t.Fatal(err)
 		}
 		created = append(created, task)
 	}
@@ -93,24 +87,6 @@ func TestRepositoryAndServiceWithPostgres(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, "UPDATE tasks SET deleted_at = now() WHERE id = $1", deletedTask.ID); err != nil {
 		t.Fatal(err)
-	}
-
-	firstPage, err := service.List(ctx, ListParams{UserID: userID, Limit: 2})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if firstPage.Total != 3 || len(firstPage.Items) != 2 || firstPage.NextCursor == nil {
-		t.Fatalf("first page = %#v, want 2 tasks, cursor and total 3", firstPage)
-	}
-	if firstPage.Items[0].ID != created[2].ID || firstPage.Items[1].ID != created[1].ID {
-		t.Fatalf("first page IDs = %s, %s; want new then middle", firstPage.Items[0].ID, firstPage.Items[1].ID)
-	}
-	secondPage, err := service.List(ctx, ListParams{UserID: userID, Cursor: firstPage.NextCursor, Limit: 2})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if secondPage.Total != 3 || len(secondPage.Items) != 1 || secondPage.Items[0].ID != created[0].ID || secondPage.NextCursor != nil {
-		t.Fatalf("second page = %#v, want only old task, total 3 and no cursor", secondPage)
 	}
 
 	if _, err := repository.Get(ctx, userID, otherTask.ID); !errors.Is(err, ErrNotFound) {

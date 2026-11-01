@@ -46,13 +46,6 @@ type errorResponse struct {
 	Error errorBody `json:"error"`
 }
 
-type taskListResponse struct {
-	Items          []TaskResponse `json:"items"`
-	NextCursor     *string        `json:"next_cursor"`
-	Total          int64          `json:"total"`
-	CompletedTotal int64          `json:"completed_total"`
-}
-
 func NewTaskResponse(task Task) TaskResponse {
 	return TaskResponse{
 		ID:          task.ID,
@@ -67,22 +60,4 @@ func NewTaskResponse(task Task) TaskResponse {
 		UpdatedAt:   task.UpdatedAt,
 		Version:     task.Version,
 	}
-}
-
-func newTaskListResponse(page ListPage) taskListResponse {
-	response := taskListResponse{
-		Items:          make([]TaskResponse, 0, len(page.Items)),
-		Total:          page.Total,
-		CompletedTotal: page.CompletedTotal,
-	}
-	for _, task := range page.Items {
-		response.Items = append(response.Items, NewTaskResponse(task))
-	}
-
-	if page.NextCursor != nil {
-		encodedCursor := encodeTaskCursor(*page.NextCursor)
-		response.NextCursor = &encodedCursor
-	}
-
-	return response
 }
